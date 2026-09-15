@@ -1,0 +1,8 @@
+/* Portable fallback for external Vite hosting: no managed asset URLs are required. */
+.admin-welcome {
+  background:
+    radial-gradient(circle at 9% 73%, #eb8d2d 0 2px, transparent 3px),
+    radial-gradient(circle at 82% 29%, #6638d5 0 2px, transparent 3px),
+    radial-gradient(circle at 95% 82%, #2467d5 0 2px, transparent 3px),
+    #111 !important;
+}
