@@ -1,6 +1,6 @@
 /** HSL admin workspace: a separate administrator surface, not a member dashboard. */
 import { Check, ChevronRight, ClipboardCheck, Home, LayoutDashboard, LogOut, Megaphone, Moon, Pencil, Plus, Rocket, Search, Send, Sun, Trash2, UsersRound, X } from "lucide-react";
-import { FormEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -135,6 +135,7 @@ export default function AdminDashboard() {
   const startups = useMemo(() => (startupsQuery.data ?? []).map(mapStartupToSubmission), [startupsQuery.data]);
   const announcements = useMemo(() => (announcementsQuery.data ?? []).map(mapApiAnnouncement), [announcementsQuery.data]);
   const isLoading = dashboardStatsQuery.isLoading || usersQuery.isLoading || startupsQuery.isLoading || announcementsQuery.isLoading;
+  useEffect(() => { [dashboardStatsQuery, usersQuery, startupsQuery, announcementsQuery].forEach((q) => { if (q.error) toast.error(q.error.message || "Failed to load data"); }); }, [dashboardStatsQuery.error, usersQuery.error, startupsQuery.error, announcementsQuery.error]);
   const metrics = useMemo(() => {
     const stats = dashboardStatsQuery.data;
     return {
@@ -149,18 +150,22 @@ export default function AdminDashboard() {
   const startupMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "APPROVED" | "REJECTED" }) => updateStartupStatus(id, status),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "startups"] }); setSelectedStartup(null); toast.success("Startup status updated"); },
+    onError: (error: Error) => { toast.error(error.message || "Failed to update startup"); },
   });
   const createAnnouncementMutation = useMutation({
     mutationFn: (data: { title: string; content: string; published: boolean }) => createAnnouncement(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] }); setComposeOpen(false); setEditingAnnouncement(null); toast.success("Announcement created"); },
+    onError: (error: Error) => { toast.error(error.message || "Failed to create announcement"); },
   });
   const updateAnnouncementMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: { title?: string; content?: string; published?: boolean } }) => updateAnnouncement(id, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] }); setComposeOpen(false); setEditingAnnouncement(null); toast.success("Announcement updated"); },
+    onError: (error: Error) => { toast.error(error.message || "Failed to update announcement"); },
   });
   const deleteAnnouncementMutation = useMutation({
     mutationFn: async (id: string) => { await deleteAnnouncement(id); },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] }); toast.success("Announcement deleted"); },
+    onError: (error: Error) => { toast.error(error.message || "Failed to delete announcement"); },
   });
   const updateStartup = (realId: string, status: ReviewStatus) => {
     startupMutation.mutate({ id: realId, status: status === "Approved" ? "APPROVED" : "REJECTED" });

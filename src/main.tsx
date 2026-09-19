@@ -14,7 +14,12 @@ import "./login.css";
 
 document.documentElement.classList.add("light");
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+    mutations: { retry: false },
+  },
+});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
