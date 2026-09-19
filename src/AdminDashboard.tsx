@@ -1,32 +1,83 @@
 /** HSL admin workspace: a separate administrator surface, not a member dashboard. */
-import { CalendarDays, Check, ChevronRight, ClipboardCheck, Home, LayoutDashboard, LogOut, Megaphone, Moon, Pencil, Plus, Rocket, Search, Send, Sun, Trash2, UsersRound, X } from "lucide-react";
+import { Check, ChevronRight, ClipboardCheck, Home, LayoutDashboard, LogOut, Megaphone, Moon, Pencil, Plus, Rocket, Search, Send, Sun, Trash2, UsersRound, X } from "lucide-react";
 import { FormEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "./contexts/AuthContext";
+import {
+  fetchAdminUsers,
+  fetchAdminDashboard,
+  fetchCurrentUser,
+  fetchAnnouncements,
+  createAnnouncement,
+  updateAnnouncement,
+  deleteAnnouncement,
+  fetchAllStartups,
+  updateStartupStatus,
+  type AdminUser,
+  type Announcement as ApiAnnouncement,
+} from "./lib/adminApi";
 
 type ReviewStatus = "Pending" | "Approved" | "Rejected";
 type Application = { id: string; applicant: string; email: string; course: string; field: string; contact: string; submitted: string; status: ReviewStatus };
-type StartupSubmission = { id: string; name: string; founder: string; stage: string; category: string; description: string; submitted: string; status: ReviewStatus; reviewNote?: string };
-type Announcement = { id: number; title: string; message: string; author: string; date: string; state: "Draft" | "Published" };
+type StartupSubmission = { id: string; realId: string; name: string; founder: string; stage: string; category: string; description: string; submitted: string; status: ReviewStatus };
+type Announcement = { id: string; title: string; message: string; author: string; date: string; state: "Draft" | "Published" };
 type AdminSection = "overview" | "members" | "startups" | "announcements";
 
-const initialApplications: Application[] = [
-  { id: "MEM-204", applicant: "Applicant 204", email: "applicant204@covenantuniversity.edu.ng", course: "Computer Science", field: "Frontend Engineering", contact: "@applicant204", submitted: "Today, 10:42 AM", status: "Pending" },
-  { id: "MEM-203", applicant: "Applicant 203", email: "applicant203@covenantuniversity.edu.ng", course: "Economics", field: "Product Strategy", contact: "@applicant203", submitted: "Today, 9:15 AM", status: "Pending" },
-  { id: "MEM-202", applicant: "Applicant 202", email: "applicant202@covenantuniversity.edu.ng", course: "Architecture", field: "Visual Design", contact: "@applicant202", submitted: "Yesterday", status: "Pending" },
-  { id: "MEM-201", applicant: "Applicant 201", email: "applicant201@covenantuniversity.edu.ng", course: "Information Technology", field: "Backend Engineering", contact: "@applicant201", submitted: "Yesterday", status: "Approved" },
-];
-const initialStartups: StartupSubmission[] = [
-  { id: "STP-041", name: "Kora Clinic", founder: "Applicant 204", stage: "MVP", category: "Health-tech", description: "A lightweight patient-intake system for local primary-care practices.", submitted: "Today, 8:37 AM", status: "Pending" },
-  { id: "STP-040", name: "Soko Route", founder: "Applicant 203", stage: "Prototype", category: "Logistics", description: "Delivery planning for campus merchants and student-led shops.", submitted: "Yesterday", status: "Pending" },
-  { id: "STP-039", name: "Ledgerly", founder: "Member 127", stage: "Growth", category: "Fintech", description: "Payments infrastructure for African SMEs.", submitted: "May 14", status: "Approved" },
-];
-const initialAnnouncements: Announcement[] = [
-  { id: 1, title: "Application review window", message: "The current membership review window closes Friday at 5:00 PM.", author: "HSL Admin", date: "Today, 8:00 AM", state: "Published" },
-  { id: 2, title: "Demo Day volunteer call", message: "Member support and production volunteers can register through the community board.", author: "HSL Admin", date: "Yesterday", state: "Published" },
-  { id: 3, title: "Cohort application review", message: "Draft reminder for the next cohort’s application deadline.", author: "HSL Admin", date: "Drafted May 20", state: "Draft" },
-];
-const calendarDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function formatRelativeDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function mapUserToApplication(user: AdminUser): Application {
+  return {
+    id: user.id.slice(0, 8).toUpperCase(),
+    applicant: user.profile?.name ?? user.email.split("@")[0],
+    email: user.email,
+    course: user.profile?.course?.replace(/_/g, " ") ?? "Not set",
+    field: user.profile?.field?.replace(/_/g, " ") ?? user.profile?.fieldOther?.replace(/_/g, " ") ?? "Not set",
+    contact: user.profile?.telegramPhone ?? "Not set",
+    submitted: formatRelativeDate(user.createdAt),
+    status: "Approved",
+  };
+}
+
+function mapStartupToSubmission(startup: { id: string; name: string; description: string; industry: string; stage: string; status: string; createdAt: string; owner: { id: string; name: string; profileUrl: string | null } }): StartupSubmission {
+  const statusMap: Record<string, ReviewStatus> = { PENDING: "Pending", APPROVED: "Approved", REJECTED: "Rejected" };
+  return {
+    id: startup.id.slice(0, 8).toUpperCase(),
+    realId: startup.id,
+    name: startup.name,
+    founder: startup.owner?.name ?? "Unknown",
+    stage: startup.stage?.replace(/_/g, " ") ?? "Not set",
+    category: startup.industry?.replace(/_/g, " ") ?? "Not set",
+    description: startup.description,
+    submitted: formatRelativeDate(startup.createdAt),
+    status: statusMap[startup.status] ?? "Pending",
+  };
+}
+
+function mapApiAnnouncement(a: ApiAnnouncement): Announcement {
+  return {
+    id: a.id,
+    title: a.title,
+    message: a.content,
+    author: a.author?.name ?? "HSL Admin",
+    date: formatRelativeDate(a.createdAt),
+    state: a.published ? "Published" : "Draft",
+  };
+}
 
 function StatusPill({ status }: { status: ReviewStatus | "Draft" | "Published" }) { return <span className={`admin-status admin-status--${status.toLowerCase()}`}>{status}</span>; }
 
@@ -40,32 +91,27 @@ function AnimatedMetricNumber({ value }: { value: number }) {
   return <strong ref={numberRef}>{value}</strong>;
 }
 
-function AdminActivityCharts({ pendingMembers, pendingStartups, approvedStartups }: { pendingMembers: number; pendingStartups: number; approvedStartups: number }) {
+function AdminOverviewChart({ totalMembers, pendingStartups, approvedStartups }: { totalMembers: number; pendingStartups: number; approvedStartups: number }) {
   const chartScope = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const context = gsap.context(() => {
-      gsap.fromTo(".admin-chart-line", { strokeDashoffset: 280 }, { strokeDashoffset: 0, duration: 1.25, ease: "power3.out", delay: .34 });
-      gsap.fromTo(".admin-chart-dot", { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, stagger: .09, duration: .34, ease: "back.out(1.9)", delay: .82 });
       gsap.fromTo(".admin-bar-fill", { scaleY: 0, transformOrigin: "bottom" }, { scaleY: 1, stagger: .1, duration: .6, ease: "power3.out", delay: .45 });
     }, chartScope);
     return () => context.revert();
   }, []);
-  const capacity = Math.max(pendingMembers, pendingStartups, approvedStartups, 4);
+  const capacity = Math.max(totalMembers, pendingStartups, approvedStartups, 4);
   return <div className="admin-chart-grid" ref={chartScope}>
-    <article className="admin-chart-panel admin-animate"><div className="admin-chart-heading"><div><p className="eyebrow">Seven-day view</p><h3>Review activity</h3></div><span className="chart-legend"><i /> Applications</span></div><svg className="admin-line-chart" viewBox="0 0 350 130" role="img" aria-label="Membership application review activity across seven days"><path className="admin-chart-gridline" d="M14 20H340M14 62H340M14 104H340" /><path className="admin-chart-line" pathLength="280" d="M14 97 C39 83, 52 100, 74 73 S112 80, 132 57 S169 74, 192 37 S235 60, 255 46 S294 23, 338 18" /><g><circle className="admin-chart-dot" cx="14" cy="97" r="4" /><circle className="admin-chart-dot" cx="74" cy="73" r="4" /><circle className="admin-chart-dot" cx="132" cy="57" r="4" /><circle className="admin-chart-dot" cx="192" cy="37" r="4" /><circle className="admin-chart-dot" cx="255" cy="46" r="4" /><circle className="admin-chart-dot" cx="338" cy="18" r="4" /></g></svg><div className="chart-days">{calendarDays.map((day) => <span key={day}>{day}</span>)}</div></article>
-    <article className="admin-chart-panel admin-animate"><div className="admin-chart-heading"><div><p className="eyebrow">Live queue</p><h3>Approval status</h3></div><span className="chart-total">{pendingMembers + pendingStartups + approvedStartups} records</span></div><div className="admin-bar-chart">{[["Members", pendingMembers, "pink"], ["Startups", pendingStartups, "orange"], ["Approved", approvedStartups, "blue"]].map(([label, number, color]) => <div className="admin-bar-row" key={String(label)}><span>{label}</span><div className="admin-bar-track"><i className={`admin-bar-fill admin-bar-fill--${color}`} style={{ height: `${Math.max(18, Number(number) / capacity * 100)}%` }} /></div><strong>{number}</strong></div>)}</div></article>
+    <article className="admin-chart-panel admin-animate"><div className="admin-chart-heading"><div><p className="eyebrow">Overview</p><h3>Approval status</h3></div><span className="chart-total">{totalMembers + pendingStartups + approvedStartups} records</span></div><div className="admin-bar-chart">{[["Members", totalMembers, "pink"], ["Pending startups", pendingStartups, "orange"], ["Approved startups", approvedStartups, "blue"]].map(([label, number, color]) => <div className="admin-bar-row" key={String(label)}><span>{label}</span><div className="admin-bar-track"><i className={`admin-bar-fill admin-bar-fill--${color}`} style={{ height: `${Math.max(18, Number(number) / capacity * 100)}%` }} /></div><strong>{number}</strong></div>)}</div></article>
   </div>;
 }
 
-function ReviewCalendar() {
-  return <section className="admin-panel admin-calendar-panel admin-animate"><div className="admin-panel-title"><div><p className="eyebrow">Review schedule</p><h3>Seven-day calendar</h3></div><CalendarDays size={18} /></div><div className="admin-calendar-grid">{calendarDays.map((day, index) => <div className={`admin-calendar-day ${index === 6 ? "is-weekend" : ""}`} key={day}><span>{day}</span><strong>{18 + index}</strong><small>{index < 5 ? `${index + 1} review${index === 0 ? "" : "s"}` : "No deadline"}</small></div>)}</div></section>;
-}
-
 export default function AdminDashboard() {
-  const setLocation = (path: string) => window.location.assign(path);
-  const profile = { fullName: "HSL Admin" };
-  const initials = "HA";
-  const resetProfile = () => undefined;
+  const { user, logout: firebaseLogout } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const currentUserQuery = useQuery({ queryKey: ["current-user-role"], queryFn: fetchCurrentUser });
+  const profileName = currentUserQuery.data?.profile?.name ?? user?.email?.split("@")[0] ?? "Admin";
+  const initials = profileName.slice(0, 2).toUpperCase();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   useLayoutEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -73,35 +119,85 @@ export default function AdminDashboard() {
   }, [theme]);
   const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
   const [section, setSection] = useState<AdminSection>("overview");
-  const [applications, setApplications] = useState(initialApplications);
-  const [startups, setStartups] = useState(initialStartups);
-  const [announcements, setAnnouncements] = useState(initialAnnouncements);
+  useLayoutEffect(() => { window.scrollTo(0, 0); }, [section]);
   const [selectedApplication, setSelectedApplication] = useState<Application | null>(null);
   const [selectedStartup, setSelectedStartup] = useState<StartupSubmission | null>(null);
   const [memberSearch, setMemberSearch] = useState("");
-  const [memberStatus, setMemberStatus] = useState<ReviewStatus | "All">("All");
   const [startupStatus, setStartupStatus] = useState<ReviewStatus | "All">("All");
   const [composeOpen, setComposeOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null);
   const overviewScope = useRef<HTMLElement>(null);
-  const metrics = useMemo(() => ({ pendingMembers: applications.filter((item) => item.status === "Pending").length, activeMembers: 84 + applications.filter((item) => item.status === "Approved").length, pendingStartups: startups.filter((item) => item.status === "Pending").length, approvedStartups: startups.filter((item) => item.status === "Approved").length, announcements: announcements.filter((item) => item.state === "Published").length }), [applications, startups, announcements]);
-  const memberRows = applications.filter((item) => (memberStatus === "All" || item.status === memberStatus) && `${item.applicant} ${item.email} ${item.field}`.toLowerCase().includes(memberSearch.toLowerCase()));
+  const dashboardStatsQuery = useQuery({ queryKey: ["admin", "dashboard"], queryFn: fetchAdminDashboard });
+  const usersQuery = useQuery({ queryKey: ["admin", "users"], queryFn: fetchAdminUsers });
+  const startupsQuery = useQuery({ queryKey: ["admin", "startups"], queryFn: fetchAllStartups });
+  const announcementsQuery = useQuery({ queryKey: ["admin", "announcements"], queryFn: fetchAnnouncements });
+  const applications = useMemo(() => (usersQuery.data ?? []).map(mapUserToApplication), [usersQuery.data]);
+  const startups = useMemo(() => (startupsQuery.data ?? []).map(mapStartupToSubmission), [startupsQuery.data]);
+  const announcements = useMemo(() => (announcementsQuery.data ?? []).map(mapApiAnnouncement), [announcementsQuery.data]);
+  const isLoading = dashboardStatsQuery.isLoading || usersQuery.isLoading || startupsQuery.isLoading || announcementsQuery.isLoading;
+  const metrics = useMemo(() => {
+    const stats = dashboardStatsQuery.data;
+    return {
+      activeMembers: stats?.totalUsers ?? applications.length,
+      pendingStartups: stats?.pendingStartups ?? startups.filter((item) => item.status === "Pending").length,
+      approvedStartups: stats ? stats.totalStartups - stats.pendingStartups : startups.filter((item) => item.status === "Approved").length,
+      announcements: stats?.publishedAnnouncements ?? announcements.filter((item) => item.state === "Published").length,
+    };
+  }, [dashboardStatsQuery.data, applications, startups, announcements]);
+  const memberRows = applications.filter((item) => `${item.applicant} ${item.email} ${item.field}`.toLowerCase().includes(memberSearch.toLowerCase()));
   const startupRows = startups.filter((item) => startupStatus === "All" || item.status === startupStatus);
-  const updateApplication = (id: string, status: ReviewStatus) => { setApplications((items) => items.map((item) => item.id === id ? { ...item, status } : item)); setSelectedApplication(null); toast.success(`Application ${status.toLowerCase()}`); };
-  const updateStartup = (id: string, status: ReviewStatus, reviewNote: string) => { setStartups((items) => items.map((item) => item.id === id ? { ...item, status, reviewNote } : item)); setSelectedStartup(null); toast.success(`Startup ${status.toLowerCase()}`, { description: reviewNote ? "Review note saved with the decision." : undefined }); };
-  const saveAnnouncement = (event: FormEvent<HTMLFormElement>, state: "Draft" | "Published") => { event.preventDefault(); const data = new FormData(event.currentTarget); const title = String(data.get("title") || "").trim(); const message = String(data.get("message") || "").trim(); if (!title || !message) return toast.error("Title and message are required"); const author = profile.fullName === "Member" ? "HSL Admin" : profile.fullName; if (editingAnnouncement) { setAnnouncements((items) => items.map((item) => item.id === editingAnnouncement.id ? { ...item, title, message, state, author, date: "Just now" } : item)); toast.success("Announcement updated"); } else { setAnnouncements((items) => [{ id: Date.now(), title, message, author, date: "Just now", state }, ...items]); toast.success(state === "Published" ? "Announcement published" : "Announcement saved as draft"); } setComposeOpen(false); setEditingAnnouncement(null); };
-  const deleteAnnouncement = (id: number) => { setAnnouncements((items) => items.filter((item) => item.id !== id)); toast.success("Announcement deleted"); };
-  const publish = (id: number) => { setAnnouncements((items) => items.map((item) => item.id === id ? { ...item, state: "Published", date: "Just now" } : item)); toast.success("Announcement published to all members"); };
-  const logout = () => { resetProfile(); setLocation("/"); };
+  const startupMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: "APPROVED" | "REJECTED" }) => updateStartupStatus(id, status),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "startups"] }); setSelectedStartup(null); toast.success("Startup status updated"); },
+  });
+  const createAnnouncementMutation = useMutation({
+    mutationFn: (data: { title: string; content: string; published: boolean }) => createAnnouncement(data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] }); setComposeOpen(false); setEditingAnnouncement(null); toast.success("Announcement created"); },
+  });
+  const updateAnnouncementMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { title?: string; content?: string; published?: boolean } }) => updateAnnouncement(id, data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] }); setComposeOpen(false); setEditingAnnouncement(null); toast.success("Announcement updated"); },
+  });
+  const deleteAnnouncementMutation = useMutation({
+    mutationFn: async (id: string) => { await deleteAnnouncement(id); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] }); toast.success("Announcement deleted"); },
+  });
+  const updateStartup = (realId: string, status: ReviewStatus) => {
+    startupMutation.mutate({ id: realId, status: status === "Approved" ? "APPROVED" : "REJECTED" });
+  };
+  const handleStartupSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement;
+    const decision = submitter?.value as ReviewStatus;
+    if (!selectedStartup || !decision) return;
+    updateStartup(selectedStartup.realId, decision);
+  };
+  const saveAnnouncement = (event: FormEvent<HTMLFormElement>, state: "Draft" | "Published") => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const title = String(data.get("title") || "").trim();
+    const message = String(data.get("message") || "").trim();
+    if (!title || !message) return toast.error("Title and message are required");
+    if (editingAnnouncement) {
+      updateAnnouncementMutation.mutate({ id: editingAnnouncement.id, data: { title, content: message, published: state === "Published" } });
+    } else {
+      createAnnouncementMutation.mutate({ title, content: message, published: state === "Published" });
+    }
+  };
+  const deleteAnnouncement = (id: string) => { deleteAnnouncementMutation.mutate(id); };
+  const publish = (id: string) => { updateAnnouncementMutation.mutate({ id, data: { published: true } }); };
+  const logout = async () => { await firebaseLogout(); navigate("/login"); };
   const navItems: [AdminSection, string, typeof LayoutDashboard][] = [["overview", "Overview", LayoutDashboard], ["members", "Membership", UsersRound], ["startups", "Startups", Rocket], ["announcements", "Announcements", Megaphone]];
   useLayoutEffect(() => { if (section !== "overview") return; const context = gsap.context(() => { gsap.fromTo(".admin-animate", { autoAlpha: 0, y: 22 }, { autoAlpha: 1, y: 0, stagger: .08, duration: .58, ease: "power3.out", clearProps: "transform" }); gsap.fromTo(".admin-metric-card", { autoAlpha: 0, y: 16, scale: .97 }, { autoAlpha: 1, y: 0, scale: 1, stagger: .06, duration: .5, ease: "back.out(1.25)", clearProps: "transform" }); }, overviewScope); return () => context.revert(); }, [section]);
-  return <div className="admin-shell"><aside className="admin-sidebar"><button className="admin-mark" onClick={() => setLocation("/")}><img src="/assets/hsl-mark.png" alt="HSL" /></button><div className="admin-brand"><p>HSL HUB</p><strong>Admin Portal</strong><span>General Admin</span></div><nav>{navItems.map(([id, label, Icon]) => <button key={id} className={section === id ? "is-active" : ""} onClick={() => setSection(id)}><Icon size={17} />{label}</button>)}</nav><div className="admin-sidebar-bottom"><button onClick={() => setLocation("/")}><Home size={16} />Public site</button><button onClick={logout}><LogOut size={16} />Log out</button></div></aside><main className="admin-main"><header className="admin-topbar"><div><p className="eyebrow">HSL management hub</p><h1>{section === "overview" ? "Overview" : section === "members" ? "Membership applications" : section === "startups" ? "Startup review" : "Announcements"}</h1></div><div className="admin-user"><button className="admin-theme-toggle" type="button" onClick={() => toggleTheme()} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button><span className="topbar-avatar">{initials}</span><div><strong>{profile.fullName === "Member" ? "HSL Admin" : profile.fullName}</strong><small>General Admin</small></div></div></header>
-    {section === "overview" && <section className="admin-content" ref={overviewScope}><div className="admin-welcome admin-animate"><div><p className="eyebrow eyebrow--light">Admin overview</p><h2>The community, at a glance.</h2><p>Review membership, startup submissions, announcements, and the administrative calendar.</p></div><button className="button button--white" onClick={() => { setSection("members"); setMemberStatus("Pending"); }}>Review applications <ChevronRight size={14} /></button></div><div className="admin-metrics">{[["Pending members", metrics.pendingMembers, "members"], ["Active members", metrics.activeMembers, "members"], ["Pending startups", metrics.pendingStartups, "startups"], ["Approved startups", metrics.approvedStartups, "startups"], ["Published announcements", metrics.announcements, "announcements"]].map(([label, value, target]) => <button className="admin-metric-card" key={label} onClick={() => setSection(target as AdminSection)}><span>{label}</span><AnimatedMetricNumber value={Number(value)} /><ChevronRight size={15} /></button>)}</div><AdminActivityCharts pendingMembers={metrics.pendingMembers} pendingStartups={metrics.pendingStartups} approvedStartups={metrics.approvedStartups} /><ReviewCalendar /><div className="admin-overview-grid"><section className="admin-panel admin-animate"><div className="admin-panel-title"><div><p className="eyebrow">Needs review</p><h3>Membership applications</h3></div><button className="inline-action" onClick={() => setSection("members")}>See all <ChevronRight size={13} /></button></div>{applications.filter((item) => item.status === "Pending").slice(0, 3).map((item) => <button className="admin-review-row" key={item.id} onClick={() => { setSelectedApplication(item); setSection("members"); }}><span className="admin-initial">{item.applicant.slice(-3)}</span><div><strong>{item.applicant}</strong><small>{item.course} · {item.field}</small></div><time>{item.submitted}</time></button>)}</section><section className="admin-panel admin-animate"><div className="admin-panel-title"><div><p className="eyebrow">Latest</p><h3>Announcements</h3></div><button className="inline-action" onClick={() => setSection("announcements")}>Manage <ChevronRight size={13} /></button></div>{announcements.filter((item) => item.state === "Published").slice(0, 3).map((item) => <article className="admin-announcement-row" key={item.id}><span className="admin-announcement-icon"><Megaphone size={15} /></span><div><strong>{item.title}</strong><small>{item.date} · {item.author}</small></div></article>)}</section></div></section>}
-    {section === "members" && <section className="admin-content"><div className="admin-section-tools"><div className="admin-search"><Search size={16} /><input value={memberSearch} onChange={(event) => setMemberSearch(event.target.value)} placeholder="Search applicant, email, or field" /></div><div className="admin-tabs">{(["All", "Pending", "Approved", "Rejected"] as const).map((status) => <button key={status} className={memberStatus === status ? "is-active" : ""} onClick={() => setMemberStatus(status)}>{status}{status === "Pending" && <em>{metrics.pendingMembers}</em>}</button>)}</div></div><section className="admin-table-panel"><div className="admin-table-heading"><span>Applicant</span><span>Academic information</span><span>Submitted</span><span>Status</span><span /></div>{memberRows.map((item) => <div className="admin-table-row" key={item.id}><div><strong>{item.applicant}</strong><small>{item.email}</small></div><div><strong>{item.course}</strong><small>{item.field}</small></div><time>{item.submitted}</time><StatusPill status={item.status} /><button className="button button--outline admin-small-action" onClick={() => setSelectedApplication(item)}>Review</button></div>)}{memberRows.length === 0 && <div className="admin-empty"><ClipboardCheck size={19} /><strong>No matching applications</strong><p>Try another status or clear your search.</p></div>}</section></section>}
+  return <div className="admin-shell"><aside className="admin-sidebar"><button className="admin-mark" onClick={() => navigate("/")}><img src="/assets/hsl-mark.png" alt="HSL" /></button><div className="admin-brand"><p>HSL HUB</p><strong>Admin Portal</strong><span>General Admin</span></div><nav>{navItems.map(([id, label, Icon]) => <button key={id} className={section === id ? "is-active" : ""} onClick={() => setSection(id)}><Icon size={17} />{label}</button>)}</nav><div className="admin-sidebar-bottom"><button onClick={() => navigate("/")}><Home size={16} />Public site</button><button onClick={logout}><LogOut size={16} />Log out</button></div></aside><main className="admin-main"><header className="admin-topbar"><div><p className="eyebrow">HSL management hub</p><h1>{section === "overview" ? "Overview" : section === "members" ? "Members" : section === "startups" ? "Startup review" : "Announcements"}</h1></div><div className="admin-user"><button className="admin-theme-toggle" type="button" onClick={() => toggleTheme()} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button><span className="topbar-avatar">{initials}</span><div><strong>{profileName}</strong><small>General Admin</small></div><button className="admin-mobile-logout" type="button" onClick={logout} title="Log out" aria-label="Log out"><LogOut size={16} /></button></div></header>
+    {isLoading ? <section className="admin-content"><div className="admin-empty"><ClipboardCheck size={19} /><strong>Loading data...</strong><p>Please wait while the dashboard loads.</p></div></section> : <>
+    {section === "overview" && <section className="admin-content" ref={overviewScope}><div className="admin-welcome admin-animate"><div><p className="eyebrow eyebrow--light">Admin overview</p><h2>The community, at a glance.</h2><p>Review members, startup submissions, announcements, and the administrative calendar.</p></div><button className="button button--white" onClick={() => setSection("members")}>View members <ChevronRight size={14} /></button></div><div className="admin-metrics">{[["Total members", metrics.activeMembers, "members"], ["Pending startups", metrics.pendingStartups, "startups"], ["Approved startups", metrics.approvedStartups, "startups"], ["Published announcements", metrics.announcements, "announcements"]].map(([label, value, target]) => <button className="admin-metric-card" key={label} onClick={() => setSection(target as AdminSection)}><span>{label}</span><AnimatedMetricNumber value={Number(value)} /><ChevronRight size={15} /></button>)}</div><AdminOverviewChart totalMembers={metrics.activeMembers} pendingStartups={metrics.pendingStartups} approvedStartups={metrics.approvedStartups} /><div className="admin-overview-grid"><section className="admin-panel admin-animate"><div className="admin-panel-title"><div><p className="eyebrow">Latest</p><h3>Recent members</h3></div><button className="inline-action" onClick={() => setSection("members")}>See all <ChevronRight size={13} /></button></div>{applications.slice(0, 3).map((item) => <button className="admin-review-row" key={item.id} onClick={() => { setSelectedApplication(item); setSection("members"); }}><span className="admin-initial">{item.applicant.slice(-3)}</span><div><strong>{item.applicant}</strong><small>{item.course} · {item.field}</small></div><time>{item.submitted}</time></button>)}</section><section className="admin-panel admin-animate"><div className="admin-panel-title"><div><p className="eyebrow">Recent activity</p><h3>Startup submissions</h3></div><button className="inline-action" onClick={() => setSection("startups")}>See all <ChevronRight size={13} /></button></div>{startups.filter((item) => item.status === "Pending").slice(0, 3).map((item) => <button className="admin-review-row" key={item.id} onClick={() => { setSelectedStartup(item); setSection("startups"); }}><span className="admin-initial">{item.name[0]}</span><div><strong>{item.name}</strong><small>{item.category} · {item.stage}</small></div><time>{item.submitted}</time></button>)}</section></div></section>}
+    {section === "members" && <section className="admin-content"><div className="admin-section-tools"><p className="admin-helper">View all registered members and their profile details.</p><div className="admin-search"><Search size={16} /><input value={memberSearch} onChange={(event) => setMemberSearch(event.target.value)} placeholder="Search by name, email, or field" /></div></div><section className="admin-table-panel"><div className="admin-table-heading"><span>Member</span><span>Academic information</span><span>Joined</span><span /></div>{memberRows.map((item) => <div className="admin-table-row" key={item.id}><div><strong>{item.applicant}</strong><small>{item.email}</small></div><div><strong>{item.course}</strong><small>{item.field}</small></div><time>{item.submitted}</time><button className="button button--outline admin-small-action" onClick={() => setSelectedApplication(item)}>View</button></div>)}{memberRows.length === 0 && <div className="admin-empty"><ClipboardCheck size={19} /><strong>No members found</strong><p>Try a different search term.</p></div>}</section></section>}
     {section === "startups" && <section className="admin-content"><div className="admin-section-tools"><p className="admin-helper">Review startup name, stage, description, founder, and category before approving portfolio access.</p><div className="admin-tabs">{(["All", "Pending", "Approved", "Rejected"] as const).map((status) => <button key={status} className={startupStatus === status ? "is-active" : ""} onClick={() => setStartupStatus(status)}>{status}{status === "Pending" && <em>{metrics.pendingStartups}</em>}</button>)}</div></div><div className="admin-startup-grid">{startupRows.map((item) => <article key={item.id}><div className="admin-startup-card-top"><span className="admin-startup-logo">{item.name[0]}</span><StatusPill status={item.status} /></div><p className="eyebrow">{item.category} · {item.stage}</p><h3>{item.name}</h3><p>{item.description}</p><div className="admin-startup-card-footer"><span>By {item.founder}</span><button className="inline-action" onClick={() => setSelectedStartup(item)}>Review <ChevronRight size={13} /></button></div></article>)}</div></section>}
     {section === "announcements" && <section className="admin-content"><div className="admin-section-tools"><p className="admin-helper">Manage messages shown to members. Published announcements can be edited or deleted.</p><button className="button button--black" onClick={() => { setEditingAnnouncement(null); setComposeOpen(true); }}><Plus size={15} />Create announcement</button></div><section className="admin-announcement-list">{announcements.map((item) => <article key={item.id}><div className="admin-announcement-icon"><Megaphone size={17} /></div><div><div className="announcement-title-line"><h3>{item.title}</h3><StatusPill status={item.state} /></div><p>{item.message}</p><small>{item.date} · {item.author}</small></div><div className="admin-announcement-actions"><button className="button button--outline admin-small-action" onClick={() => { setEditingAnnouncement(item); setComposeOpen(true); }}><Pencil size={13} />Edit</button>{item.state === "Draft" && <button className="button button--outline admin-small-action" onClick={() => publish(item.id)}>Publish <Send size={13} /></button>}<button className="button button--outline admin-small-action admin-danger-action" onClick={() => deleteAnnouncement(item.id)}><Trash2 size={13} />Delete</button></div></article>)}</section></section>}
-    {selectedApplication && <div className="app-modal-backdrop"><section className="admin-modal app-modal"><button className="modal-close" onClick={() => setSelectedApplication(null)}><X size={18} /></button><p className="eyebrow">Membership application · {selectedApplication.id}</p><h2>{selectedApplication.applicant}</h2><p>Review the applicant record before choosing a membership status.</p><dl className="admin-detail-list"><div><dt>School email</dt><dd>{selectedApplication.email}</dd></div><div><dt>Course</dt><dd>{selectedApplication.course}</dd></div><div><dt>HSL field</dt><dd>{selectedApplication.field}</dd></div><div><dt>Telegram/contact</dt><dd>{selectedApplication.contact}</dd></div><div><dt>Submitted</dt><dd>{selectedApplication.submitted}</dd></div></dl><div className="admin-modal-actions"><button className="button button--outline" onClick={() => updateApplication(selectedApplication.id, "Rejected")}>Reject</button><button className="button button--black" onClick={() => updateApplication(selectedApplication.id, "Approved")}>Approve member <Check size={14} /></button></div></section></div>}
-    {selectedStartup && <div className="app-modal-backdrop"><form className="admin-modal app-modal" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); updateStartup(selectedStartup.id, String(data.get("decision")) as ReviewStatus, String(data.get("reviewNote") || "").trim()); }}><button type="button" className="modal-close" onClick={() => setSelectedStartup(null)}><X size={18} /></button><p className="eyebrow">Startup submission · {selectedStartup.id}</p><h2>{selectedStartup.name}</h2><p>{selectedStartup.description}</p><dl className="admin-detail-list"><div><dt>Founder</dt><dd>{selectedStartup.founder}</dd></div><div><dt>Category</dt><dd>{selectedStartup.category}</dd></div><div><dt>Stage</dt><dd>{selectedStartup.stage}</dd></div><div><dt>Submitted</dt><dd>{selectedStartup.submitted}</dd></div><div><dt>Current status</dt><dd><StatusPill status={selectedStartup.status} /></dd></div></dl><label className="admin-review-note">Review note<textarea name="reviewNote" rows={4} placeholder="Add a reason, feedback, or next step for this submission." defaultValue={selectedStartup.reviewNote || ""} /></label><div className="admin-modal-actions"><button name="decision" value="Rejected" className="button button--outline" type="submit">Reject</button><button name="decision" value="Approved" className="button button--black" type="submit">Approve startup <Check size={14} /></button></div></form></div>}
+    </>}
+    {selectedApplication && <div className="app-modal-backdrop"><section className="admin-modal app-modal"><button className="modal-close" onClick={() => setSelectedApplication(null)}><X size={18} /></button><p className="eyebrow">Member profile</p><h2>{selectedApplication.applicant}</h2><p>Member details and academic information.</p><dl className="admin-detail-list"><div><dt>Email</dt><dd>{selectedApplication.email}</dd></div><div><dt>Course</dt><dd>{selectedApplication.course}</dd></div><div><dt>Field</dt><dd>{selectedApplication.field}</dd></div><div><dt>Contact</dt><dd>{selectedApplication.contact}</dd></div><div><dt>Joined</dt><dd>{selectedApplication.submitted}</dd></div></dl><div className="admin-modal-actions"><button className="button button--black" onClick={() => setSelectedApplication(null)}>Close</button></div></section></div>}
+    {selectedStartup && <div className="app-modal-backdrop"><form className="admin-modal app-modal" onSubmit={handleStartupSubmit}><button type="button" className="modal-close" onClick={() => setSelectedStartup(null)}><X size={18} /></button><p className="eyebrow">Startup submission · {selectedStartup.id}</p><h2>{selectedStartup.name}</h2><p>{selectedStartup.description}</p><dl className="admin-detail-list"><div><dt>Founder</dt><dd>{selectedStartup.founder}</dd></div><div><dt>Category</dt><dd>{selectedStartup.category}</dd></div><div><dt>Stage</dt><dd>{selectedStartup.stage}</dd></div><div><dt>Submitted</dt><dd>{selectedStartup.submitted}</dd></div><div><dt>Current status</dt><dd><StatusPill status={selectedStartup.status} /></dd></div></dl><div className="admin-modal-actions"><button name="decision" value="Rejected" className="button button--outline" type="submit">Reject</button><button name="decision" value="Approved" className="button button--black" type="submit">Approve startup <Check size={14} /></button></div></form></div>}
     {composeOpen && <div className="app-modal-backdrop"><form className="admin-compose app-modal" onSubmit={(event) => saveAnnouncement(event, "Published")}><button className="modal-close" type="button" onClick={() => { setComposeOpen(false); setEditingAnnouncement(null); }}><X size={18} /></button><p className="eyebrow">All members</p><h2>{editingAnnouncement ? "Edit announcement" : "New announcement"}</h2><p>Compose a clear update for every approved HSL member.</p><label>Title<input name="title" required defaultValue={editingAnnouncement?.title || ""} placeholder="What should members know?" /></label><label>Message<textarea name="message" required rows={5} defaultValue={editingAnnouncement?.message || ""} placeholder="Write the essential details, next steps, and timing." /></label><div className="admin-modal-actions"><button type="button" className="button button--outline" onClick={(event) => { const form = event.currentTarget.form; if (form) saveAnnouncement({ preventDefault: () => undefined, currentTarget: form } as unknown as FormEvent<HTMLFormElement>, "Draft"); }}>Save draft</button><button type="submit" className="button button--black">{editingAnnouncement ? "Save changes" : "Publish to all"} <Send size={14} /></button></div></form></div>}
   </main></div>;
 }
