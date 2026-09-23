@@ -1,5 +1,6 @@
 /** HSL admin workspace: a separate administrator surface, not a member dashboard. */
 import {
+  ArrowUpRight,
   Check,
   ChevronRight,
   ClipboardCheck,
@@ -561,16 +562,18 @@ export default function AdminDashboard() {
         </nav>
         <div className="admin-sidebar-bottom">
           <a
+            className="admin-sidebar-action"
             href="https://hsl-hub-lime.vercel.app/login"
             target="_blank"
             rel="noopener noreferrer"
           >
             <Home size={16} />
-            Public site
+            <span>Public site</span>
+            <ArrowUpRight size={15} className="admin-sidebar-action-arrow" />
           </a>
-          <button onClick={logout}>
+          <button className="admin-sidebar-action" onClick={logout}>
             <LogOut size={16} />
-            Log out
+            <span>Log out</span>
           </button>
         </div>
       </aside>
