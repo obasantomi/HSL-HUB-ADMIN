@@ -116,3 +116,6 @@ html.dark .admin-shell .admin-theme-toggle { color: #f5f5f5; border-color: #777;
 .admin-sidebar-bottom .admin-sidebar-action:active { transform: translateY(0); }
 .admin-sidebar-bottom .admin-sidebar-action:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .admin-sidebar-bottom .admin-sidebar-action, .admin-sidebar-bottom .admin-sidebar-action::before, .admin-sidebar-bottom .admin-sidebar-action svg { transition: none; } }
+
+/* Keep line breaks in a member's free-text about section. */
+.admin-detail-list .admin-detail-about { white-space: pre-wrap; line-height: 1.55; }

@@ -54,6 +54,9 @@ type Application = {
   email: string;
   course: string;
   field: string;
+  level: string;
+  community: string;
+  about: string;
   contact: string;
   submitted: string;
   status: ReviewStatus;
@@ -68,6 +71,7 @@ type StartupSubmission = {
   description: string;
   submitted: string;
   status: ReviewStatus;
+  memberCount: number;
 };
 type Announcement = {
   id: string;
@@ -93,17 +97,33 @@ function formatRelativeDate(dateStr: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/** Turns enum values like "LEVEL_300" or "CREATORS" into readable labels. */
+function formatLevel(level: string | undefined): string {
+  if (!level) return "Not set";
+  if (level === "PG") return "Postgraduate";
+  return `${level.replace("LEVEL_", "")} Level`;
+}
+
+function formatCommunity(name: string | undefined): string {
+  if (!name) return "Not set";
+  return name.charAt(0) + name.slice(1).toLowerCase();
+}
+
 function mapUserToApplication(user: AdminUser): Application {
+  const profile = user.profile;
+  // "OTHER" means the member typed their own niche into fieldOther.
+  const field =
+    profile?.field === "OTHER" ? profile.fieldOther : profile?.field;
   return {
     id: user.id.slice(0, 8).toUpperCase(),
-    applicant: user.profile?.name ?? user.email.split("@")[0],
+    applicant: profile?.name ?? user.email.split("@")[0],
     email: user.email,
-    course: user.profile?.course?.replace(/_/g, " ") ?? "Not set",
-    field:
-      user.profile?.field?.replace(/_/g, " ") ??
-      user.profile?.fieldOther?.replace(/_/g, " ") ??
-      "Not set",
-    contact: user.profile?.telegramPhone ?? "Not set",
+    course: profile?.course?.replace(/_/g, " ") ?? "Not set",
+    field: field?.replace(/_/g, " ") || "Not set",
+    level: formatLevel(profile?.level),
+    community: formatCommunity(profile?.community?.name),
+    about: profile?.description || "Not set",
+    contact: profile?.telegramPhone ?? "Not set",
     submitted: formatRelativeDate(user.createdAt),
     status: "Approved",
   };
@@ -118,6 +138,7 @@ function mapStartupToSubmission(startup: {
   status: string;
   createdAt: string;
   owner: { id: string; name: string; profileUrl: string | null };
+  memberCount: number;
 }): StartupSubmission {
   const statusMap: Record<string, ReviewStatus> = {
     PENDING: "Pending",
@@ -134,6 +155,7 @@ function mapStartupToSubmission(startup: {
     description: startup.description,
     submitted: formatRelativeDate(startup.createdAt),
     status: statusMap[startup.status] ?? "Pending",
+    memberCount: startup.memberCount ?? 0,
   };
 }
 
@@ -942,6 +964,10 @@ export default function AdminDashboard() {
                   <dd>{selectedApplication.email}</dd>
                 </div>
                 <div>
+                  <dt>Contact</dt>
+                  <dd>{selectedApplication.contact}</dd>
+                </div>
+                <div>
                   <dt>Course</dt>
                   <dd>{selectedApplication.course}</dd>
                 </div>
@@ -950,8 +976,18 @@ export default function AdminDashboard() {
                   <dd>{selectedApplication.field}</dd>
                 </div>
                 <div>
-                  <dt>Contact</dt>
-                  <dd>{selectedApplication.contact}</dd>
+                  <dt>Level</dt>
+                  <dd>{selectedApplication.level}</dd>
+                </div>
+                <div>
+                  <dt>Community</dt>
+                  <dd>{selectedApplication.community}</dd>
+                </div>
+                <div>
+                  <dt>About</dt>
+                  <dd className="admin-detail-about">
+                    {selectedApplication.about}
+                  </dd>
                 </div>
                 <div>
                   <dt>Joined</dt>
@@ -1004,6 +1040,12 @@ export default function AdminDashboard() {
                   <dt>Submitted</dt>
                   <dd>{selectedStartup.submitted}</dd>
                 </div>
+                {selectedStartup.status === "Approved" && (
+                  <div>
+                    <dt>Members</dt>
+                    <dd>{selectedStartup.memberCount}</dd>
+                  </div>
+                )}
                 <div>
                   <dt>Current status</dt>
                   <dd>
