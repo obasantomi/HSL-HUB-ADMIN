@@ -32,6 +32,8 @@ export interface AdminDashboardStats {
   totalUsers: number;
   totalStartups: number;
   pendingStartups: number;
+  approvedStartups: number;
+  rejectedStartups: number;
   totalAnnouncements: number;
   publishedAnnouncements: number;
 }
