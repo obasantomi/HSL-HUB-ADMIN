@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import { getErrorMessage } from "../lib/errors";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -18,9 +19,7 @@ export default function LoginPage() {
       toast.success("Logged in");
       navigate("/");
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Login failed";
-      toast.error(message);
+      toast.error(getErrorMessage(error, "Login failed. Please try again."));
     } finally {
       setLoading(false);
     }

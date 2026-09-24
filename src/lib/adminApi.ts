@@ -34,6 +34,7 @@ export interface AdminDashboardStats {
   pendingStartups: number;
   approvedStartups: number;
   rejectedStartups: number;
+  deletedStartups: number;
   totalAnnouncements: number;
   publishedAnnouncements: number;
 }
@@ -81,7 +82,7 @@ export async function deleteAnnouncement(id: string): Promise<void> {
   await apiClient.delete(`/announcements/${id}`);
 }
 
-export async function fetchAllStartups(): Promise<Array<{
+export interface AdminStartup {
   id: string;
   name: string;
   description: string;
@@ -89,23 +90,21 @@ export async function fetchAllStartups(): Promise<Array<{
   stage: string;
   status: string;
   createdAt: string;
-  owner: { id: string; name: string; profileUrl: string | null };
+  deletedAt: string | null;
+  owner: { id: string; name: string; email: string; profileUrl: string | null };
   memberCount: number;
-}>> {
-  const response = await apiClient.get<{ status: string; data: { startups: Array<{
-    id: string;
-    name: string;
-    description: string;
-    industry: string;
-    stage: string;
-    status: string;
-    createdAt: string;
-    owner: { id: string; name: string; profileUrl: string | null };
-    memberCount: number;
-  }> } }>("/startups?status=all");
+}
+
+export async function fetchAllStartups(): Promise<AdminStartup[]> {
+  const response = await apiClient.get<{ status: string; data: { startups: AdminStartup[] } }>("/startups?status=all");
   return response.data.data.startups;
 }
 
 export async function updateStartupStatus(id: string, status: "APPROVED" | "REJECTED"): Promise<void> {
   await apiClient.patch(`/startups/${id}/status`, { status });
+}
+
+/** Irreversible: only allowed once a startup is rejected or founder-deleted. */
+export async function permanentlyDeleteStartup(id: string): Promise<void> {
+  await apiClient.delete(`/startups/${id}/permanent`);
 }

@@ -119,3 +119,69 @@ html.dark .admin-shell .admin-theme-toggle { color: #f5f5f5; border-color: #777;
 
 /* Keep line breaks in a member's free-text about section. */
 .admin-detail-list .admin-detail-about { white-space: pre-wrap; line-height: 1.55; }
+
+/* Modals: the backdrop owns scrolling so tall modals stay reachable while the page is locked. */
+.app-modal-backdrop { overflow-y: auto; overscroll-behavior: contain; }
+.app-modal-backdrop--top { z-index: 90; }
+
+/* Startups: governance notice and founder-deleted details. */
+.admin-governance-note { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; padding: 13px 15px; border: 1px solid #dededb; background: #fff; color: #555; font-size: 11px; line-height: 1.55; }
+.admin-governance-note svg { flex-shrink: 0; margin-top: 1px; color: var(--blue); }
+.admin-governance-note p { margin: 0; }
+.admin-governance-note strong { color: #131313; }
+.admin-governance-note--warn { border-color: #f0d9a8; background: #fff8e8; }
+.admin-governance-note--warn svg { color: #b7791f; }
+.admin-status--deleted { color: #5f5f5f; background: #e8e8e6; }
+.admin-deleted-notice { display: grid; gap: 8px; padding: 13px 15px; border-left: 3px solid #b42d45; background: #faf1f2; font-size: 10.5px; line-height: 1.6; color: #444; }
+.admin-deleted-notice p { margin: 0; }
+.admin-deleted-notice strong { color: #131313; }
+.admin-deleted-notice a { color: var(--blue); font-weight: 700; word-break: break-all; }
+.admin-modal-hint { margin: 0; color: #777; font-size: 10px; }
+.admin-modal-actions-start { margin-right: auto; }
+.admin-danger-solid { color: #fff; background: #b42d45; border-color: #b42d45; }
+.admin-danger-solid:hover:not(:disabled) { background: #93233a; }
+.admin-danger-solid:disabled, .admin-danger-action:disabled { opacity: .55; cursor: not-allowed; }
+html.dark .admin-shell .admin-governance-note { color: #bbb; background: #171717; border-color: #3b3b3b; }
+html.dark .admin-shell .admin-governance-note strong, html.dark .admin-deleted-notice strong { color: #f5f5f5; }
+html.dark .admin-shell .admin-governance-note--warn { background: #221c10; border-color: #5a4720; }
+html.dark .admin-status--deleted { color: #ccc; background: #2c2c2c; }
+html.dark .admin-deleted-notice { color: #ccc; background: #231518; }
+html.dark .admin-deleted-notice a { color: #7aa7f0; }
+html.dark .admin-modal-hint { color: #aaa; }
+@media (max-width:600px) { .admin-modal-actions-start { margin-right: 0; } }
+
+/* Topbar on small screens: keep the page title and the theme/avatar controls apart. */
+.admin-topbar { gap: 16px; }
+.admin-topbar > div:first-child { min-width: 0; }
+@media (max-width:600px) {
+  .admin-topbar { min-height: 76px; padding: 16px 18px; gap: 14px; }
+  .admin-topbar h1 { font-size: 26px; line-height: .95; }
+  .admin-topbar .eyebrow { font-size: 7px; }
+  .admin-user { gap: 7px; }
+  .admin-theme-toggle, .admin-mobile-logout { width: 30px !important; height: 30px !important; margin-left: 0 !important; }
+  .admin-theme-toggle svg, .admin-mobile-logout svg { width: 14px; height: 14px; }
+  .topbar-avatar { width: 32px; height: 32px; font-size: 11px; }
+}
+@media (max-width:380px) {
+  .admin-topbar h1 { font-size: 22px; }
+}
+.admin-shell .admin-modal-actions .admin-danger-action { color: #b42d45 !important; border-color: #e3b5bd !important; }
+.admin-shell .admin-modal-actions .admin-danger-action:hover:not(:disabled) { color: #fff !important; border-color: #b42d45 !important; background: #b42d45 !important; }
+.admin-shell .admin-danger-solid { color: #fff; border-color: #b42d45; background: #b42d45; }
+.admin-shell .admin-danger-solid:hover:not(:disabled) { background: #93233a; border-color: #93233a; }
+
+/* Error states: clear message, manual retry only. */
+.admin-error { display: grid; justify-items: center; gap: 8px; max-width: 460px; margin: 40px auto; padding: 34px 28px; border: 1px solid #dededb; background: #fff; text-align: center; color: #131313; }
+.admin-error h2 { margin: 4px 0 0; font-family: "Manrope"; font-size: 18px; font-weight: 800; }
+.admin-error > p:not(.eyebrow) { margin: 0; max-width: 380px; color: #666; font-size: 11px; line-height: 1.6; }
+.admin-error-icon { display: grid; width: 44px; height: 44px; place-items: center; margin-bottom: 4px; border-radius: 50%; color: #b42d45; background: #faf1f2; }
+.admin-error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 12px; }
+.admin-error-page { display: grid; min-height: 100vh; place-items: center; padding: 20px; background: #f5f5f3; }
+.admin-error-page .admin-error { margin: 0; width: 100%; }
+.admin-spin { animation: admin-spin .8s linear infinite; }
+@keyframes admin-spin { to { transform: rotate(360deg); } }
+html.dark .admin-error { color: #f5f5f5; background: #171717; border-color: #3b3b3b; }
+html.dark .admin-error > p:not(.eyebrow) { color: #aaa; }
+html.dark .admin-error-icon { background: #2a1519; color: #f08a9c; }
+html.dark .admin-error-page { background: #101010; }
+@media (max-width:600px) { .admin-error { margin: 20px auto; padding: 28px 18px; } .admin-error-actions { flex-direction: column; width: 100%; } .admin-error-actions .button { width: 100%; } }

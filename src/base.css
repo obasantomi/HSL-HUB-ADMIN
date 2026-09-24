@@ -21,3 +21,7 @@ html.dark .button--outline { color: #f5f5f5; border-color: #666; }
 html.dark .button--black { color: #111; background: #f5f5f5; }
 html.dark .button--white { color: #111; background: #fff; }
 @media (prefers-color-scheme: dark) { .app-modal { color: #f5f5f5; background: #171717; border: 1px solid #3b3b3b; } .app-modal > p, .app-modal dt, .app-modal small, .app-modal label { color: #aaa; } .app-modal h2, .app-modal dd { color: #f5f5f5; } .app-modal input, .app-modal textarea, .app-modal select { color: #f5f5f5; background: #202020; border-color: #4a4a4a; } }
+
+/* Native selects: inset chevron with breathing room from the edge. */
+select:not([multiple]):not([size]) { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23777777' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important; background-repeat: no-repeat !important; background-position: right 12px center !important; background-size: 13px 13px !important; padding-right: 36px !important; text-overflow: ellipsis; cursor: pointer; }
+html.dark select:not([multiple]):not([size]) { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaaaaa' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important; }

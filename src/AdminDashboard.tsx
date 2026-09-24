@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   Home,
+  Info,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -16,6 +17,7 @@ import {
   Send,
   Sun,
   Trash2,
+  TriangleAlert,
   UsersRound,
   X,
 } from "lucide-react";
@@ -28,7 +30,6 @@ import {
   useState,
 } from "react";
 import { gsap } from "gsap";
-import axios from "axios";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -43,11 +44,17 @@ import {
   deleteAnnouncement,
   fetchAllStartups,
   updateStartupStatus,
+  permanentlyDeleteStartup,
+  type AdminStartup,
   type AdminUser,
   type Announcement as ApiAnnouncement,
 } from "./lib/adminApi";
+import { describeError, getErrorMessage } from "./lib/errors";
 
-type ReviewStatus = "Pending" | "Approved" | "Rejected";
+const describeErrorKind = (error: unknown) => describeError(error).kind;
+import ErrorState from "./components/ErrorState";
+
+type ReviewStatus = "Pending" | "Approved" | "Rejected" | "Deleted";
 type Application = {
   id: string;
   applicant: string;
@@ -66,12 +73,14 @@ type StartupSubmission = {
   realId: string;
   name: string;
   founder: string;
+  founderEmail: string;
   stage: string;
   category: string;
   description: string;
   submitted: string;
   status: ReviewStatus;
   memberCount: number;
+  deletedAt: string | null;
 };
 type Announcement = {
   id: string;
@@ -129,33 +138,26 @@ function mapUserToApplication(user: AdminUser): Application {
   };
 }
 
-function mapStartupToSubmission(startup: {
-  id: string;
-  name: string;
-  description: string;
-  industry: string;
-  stage: string;
-  status: string;
-  createdAt: string;
-  owner: { id: string; name: string; profileUrl: string | null };
-  memberCount: number;
-}): StartupSubmission {
+function mapStartupToSubmission(startup: AdminStartup): StartupSubmission {
   const statusMap: Record<string, ReviewStatus> = {
     PENDING: "Pending",
     APPROVED: "Approved",
     REJECTED: "Rejected",
+    DELETED: "Deleted",
   };
   return {
     id: startup.id.slice(0, 8).toUpperCase(),
     realId: startup.id,
     name: startup.name,
     founder: startup.owner?.name ?? "Unknown",
+    founderEmail: startup.owner?.email ?? "",
     stage: startup.stage?.replace(/_/g, " ") ?? "Not set",
     category: startup.industry?.replace(/_/g, " ") ?? "Not set",
     description: startup.description,
     submitted: formatRelativeDate(startup.createdAt),
     status: statusMap[startup.status] ?? "Pending",
     memberCount: startup.memberCount ?? 0,
+    deletedAt: startup.deletedAt ?? null,
   };
 }
 
@@ -175,7 +177,36 @@ const STARTUP_ACTIONS: Record<ReviewStatus, Array<"Approved" | "Rejected">> = {
   Pending: ["Rejected", "Approved"],
   Approved: ["Rejected"],
   Rejected: ["Approved"],
+  // Founder-deleted startups are restored by support in the database, not here.
+  Deleted: [],
 };
+
+/** Permanent deletion is only offered once a startup is out of circulation. */
+const PERMANENTLY_DELETABLE: ReviewStatus[] = ["Rejected", "Deleted"];
+
+let scrollLockCount = 0;
+
+/** Freezes background scrolling while a modal is open so it keeps the admin's focus. */
+function useBodyScrollLock(locked: boolean) {
+  useEffect(() => {
+    if (!locked) return;
+    const { body, documentElement } = document;
+    const previous = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
+    if (scrollLockCount === 0) {
+      const scrollbarWidth = window.innerWidth - documentElement.clientWidth;
+      body.style.overflow = "hidden";
+      if (scrollbarWidth > 0) body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+    scrollLockCount += 1;
+    return () => {
+      scrollLockCount -= 1;
+      if (scrollLockCount === 0) {
+        body.style.overflow = previous.overflow;
+        body.style.paddingRight = previous.paddingRight;
+      }
+    };
+  }, [locked]);
+}
 
 function StatusPill({
   status,
@@ -306,9 +337,14 @@ export default function AdminDashboard() {
     "All",
   );
   const [composeOpen, setComposeOpen] = useState(false);
+  const [startupToPurge, setStartupToPurge] =
+    useState<StartupSubmission | null>(null);
   const [editingAnnouncement, setEditingAnnouncement] =
     useState<Announcement | null>(null);
   const overviewScope = useRef<HTMLElement>(null);
+  useBodyScrollLock(
+    Boolean(selectedApplication || selectedStartup || composeOpen || startupToPurge),
+  );
   const dashboardStatsQuery = useQuery({
     queryKey: ["admin", "dashboard"],
     queryFn: fetchAdminDashboard,
@@ -337,26 +373,23 @@ export default function AdminDashboard() {
     () => (announcementsQuery.data ?? []).map(mapApiAnnouncement),
     [announcementsQuery.data],
   );
-  const isLoading =
-    dashboardStatsQuery.isLoading ||
-    usersQuery.isLoading ||
-    startupsQuery.isLoading ||
-    announcementsQuery.isLoading;
-  useEffect(() => {
-    [
-      dashboardStatsQuery,
-      usersQuery,
-      startupsQuery,
-      announcementsQuery,
-    ].forEach((q) => {
-      if (q.error) toast.error(q.error.message || "Failed to load data");
-    });
-  }, [
-    dashboardStatsQuery.error,
-    usersQuery.error,
-    startupsQuery.error,
-    announcementsQuery.error,
-  ]);
+  // Each section only depends on the data it shows, so one failing endpoint
+  // doesn't take down the whole dashboard.
+  const sectionQueries = {
+    overview: [dashboardStatsQuery, usersQuery, startupsQuery, announcementsQuery],
+    members: [usersQuery],
+    startups: [startupsQuery],
+    announcements: [announcementsQuery],
+  }[section];
+  const failedQuery = sectionQueries.find((query) => query.isError);
+  const sectionError = failedQuery?.error ?? null;
+  const isRetryingSection = sectionQueries.some((query) => query.isFetching);
+  const retrySection = () => {
+    sectionQueries
+      .filter((query) => query.isError)
+      .forEach((query) => void query.refetch());
+  };
+  const isLoading = sectionQueries.some((query) => query.isLoading);
   const metrics = useMemo(() => {
     const stats = dashboardStatsQuery.data;
     return {
@@ -370,6 +403,9 @@ export default function AdminDashboard() {
       rejectedStartups:
         stats?.rejectedStartups ??
         startups.filter((item) => item.status === "Rejected").length,
+      deletedStartups:
+        stats?.deletedStartups ??
+        startups.filter((item) => item.status === "Deleted").length,
       announcements:
         stats?.publishedAnnouncements ??
         announcements.filter((item) => item.state === "Published").length,
@@ -388,8 +424,11 @@ export default function AdminDashboard() {
       .toLowerCase()
       .includes(memberSearch.toLowerCase()),
   );
-  const startupRows = startups.filter(
-    (item) => startupStatus === "All" || item.status === startupStatus,
+  // Founder-deleted startups live only under their own tab.
+  const startupRows = startups.filter((item) =>
+    startupStatus === "All"
+      ? item.status !== "Deleted"
+      : item.status === startupStatus,
   );
   const startupMutation = useMutation({
     mutationFn: ({
@@ -408,15 +447,25 @@ export default function AdminDashboard() {
       setSelectedStartup(null);
     },
     onError: (error: Error) => {
-      toast.error(
-        (axios.isAxiosError(error) &&
-          (error.response?.data as { message?: string } | undefined)
-            ?.message) ||
-          error.message ||
-          "Failed to update startup",
-      );
+      toast.error(getErrorMessage(error, "Failed to update startup"));
     },
     // Refresh every view that depends on startup status, whether the change succeeded or was refused as stale.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "startups"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
+  });
+  const purgeStartupMutation = useMutation({
+    mutationFn: (id: string) => permanentlyDeleteStartup(id),
+    onSuccess: () => {
+      toast.success("Startup permanently deleted");
+      setStartupToPurge(null);
+      setSelectedStartup(null);
+    },
+    onError: (error: Error) => {
+      toast.error(getErrorMessage(error, "Failed to delete startup"));
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "startups"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "dashboard"] });
@@ -436,7 +485,7 @@ export default function AdminDashboard() {
       toast.success("Announcement created");
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to create announcement");
+      toast.error(getErrorMessage(error, "Failed to create announcement"));
     },
   });
   const updateAnnouncementMutation = useMutation({
@@ -454,7 +503,7 @@ export default function AdminDashboard() {
       toast.success("Announcement updated");
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to update announcement");
+      toast.error(getErrorMessage(error, "Failed to update announcement"));
     },
   });
   const deleteAnnouncementMutation = useMutation({
@@ -466,7 +515,7 @@ export default function AdminDashboard() {
       toast.success("Announcement deleted");
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to delete announcement");
+      toast.error(getErrorMessage(error, "Failed to delete announcement"));
     },
   });
   const handleStartupSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -639,7 +688,22 @@ export default function AdminDashboard() {
             </button>
           </div>
         </header>
-        {isLoading ? (
+        {sectionError ? (
+          <section className="admin-content">
+            <ErrorState
+              error={sectionError}
+              onRetry={retrySection}
+              isRetrying={isRetryingSection}
+              actions={
+                describeErrorKind(sectionError) === "unauthorized" ? (
+                  <button className="button button--outline" onClick={logout}>
+                    Sign in again
+                  </button>
+                ) : undefined
+              }
+            />
+          </section>
+        ) : isLoading ? (
           <section className="admin-content">
             <div className="admin-empty">
               <ClipboardCheck size={19} />
@@ -824,11 +888,11 @@ export default function AdminDashboard() {
               <section className="admin-content">
                 <div className="admin-section-tools">
                   <p className="admin-helper">
-                    Review startup name, stage, description, founder, and
-                    category before approving portfolio access.
+                    Review each submission's name, stage, description, founder,
+                    and category before granting it a place on the platform.
                   </p>
                   <div className="admin-tabs">
-                    {(["All", "Pending", "Approved", "Rejected"] as const).map(
+                    {(["All", "Pending", "Approved", "Rejected", "Deleted"] as const).map(
                       (status) => (
                         <button
                           key={status}
@@ -845,11 +909,47 @@ export default function AdminDashboard() {
                             metrics.rejectedStartups > 0 && (
                               <em>{metrics.rejectedStartups}</em>
                             )}
+                          {status === "Deleted" &&
+                            metrics.deletedStartups > 0 && (
+                              <em>{metrics.deletedStartups}</em>
+                            )}
                         </button>
                       ),
                     )}
                   </div>
                 </div>
+                <div className="admin-governance-note" role="note">
+                  <Info size={15} />
+                  <p>
+                    <strong>Startups are governed by HSL administrators.</strong>{" "}
+                    Every submission is reviewed before it goes live.
+                    Administrators may approve, reject, or permanently delete
+                    a startup; permanent deletion is available only after a
+                    startup has been rejected or removed by its founder.
+                  </p>
+                </div>
+                {startupStatus === "Deleted" && (
+                  <div className="admin-governance-note admin-governance-note--warn" role="note">
+                    <TriangleAlert size={15} />
+                    <p>
+                      <strong>Removed by their founders.</strong> These startups
+                      are no longer visible on the platform but remain on
+                      record. They can be restored only through platform support,
+                      who will revert the startup's status in the database.
+                    </p>
+                  </div>
+                )}
+                {startupRows.length === 0 && (
+                  <div className="admin-empty">
+                    <ClipboardCheck size={19} />
+                    <strong>No startups here</strong>
+                    <p>
+                      {startupStatus === "Deleted"
+                        ? "No founder has deleted a startup."
+                        : "Nothing matches this filter yet."}
+                    </p>
+                  </div>
+                )}
                 <div className="admin-startup-grid">
                   {startupRows.map((item) => (
                     <article key={item.id}>
@@ -1052,8 +1152,54 @@ export default function AdminDashboard() {
                     <StatusPill status={selectedStartup.status} />
                   </dd>
                 </div>
+                {selectedStartup.status === "Deleted" &&
+                  selectedStartup.deletedAt && (
+                    <div>
+                      <dt>Deleted</dt>
+                      <dd>{formatRelativeDate(selectedStartup.deletedAt)}</dd>
+                    </div>
+                  )}
               </dl>
+              {selectedStartup.status === "Deleted" && (
+                <div className="admin-deleted-notice">
+                  <p>
+                    <strong>Founder enquiries.</strong> To learn why this
+                    startup was deleted, contact the founder at{" "}
+                    {selectedStartup.founderEmail ? (
+                      <a href={`mailto:${selectedStartup.founderEmail}`}>
+                        {selectedStartup.founderEmail}
+                      </a>
+                    ) : (
+                      "the email address on their profile"
+                    )}
+                    .
+                  </p>
+                  <p>
+                    <strong>Restoration.</strong> A deleted startup can be
+                    restored only after the founder contacts platform support.
+                    Platform support will then restore it by manually reverting the startup's
+                    status in the database.
+                  </p>
+                </div>
+              )}
+              {(selectedStartup.status === "Pending" ||
+                selectedStartup.status === "Approved") && (
+                <p className="admin-modal-hint">
+                  To permanently delete this startup, reject it first.
+                </p>
+              )}
               <div className="admin-modal-actions">
+                {PERMANENTLY_DELETABLE.includes(selectedStartup.status) && (
+                  <button
+                    type="button"
+                    className="button button--outline admin-danger-action admin-modal-actions-start"
+                    onClick={() => setStartupToPurge(selectedStartup)}
+                    disabled={startupMutation.isPending}
+                  >
+                    <Trash2 size={14} />
+                    Delete forever
+                  </button>
+                )}
                 {STARTUP_ACTIONS[selectedStartup.status].includes(
                   "Rejected",
                 ) && (
@@ -1087,6 +1233,55 @@ export default function AdminDashboard() {
                 )}
               </div>
             </form>
+          </div>
+        )}
+        {startupToPurge && (
+          <div className="app-modal-backdrop app-modal-backdrop--top">
+            <section
+              className="admin-modal app-modal"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="purge-startup-title"
+            >
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setStartupToPurge(null)}
+                disabled={purgeStartupMutation.isPending}
+              >
+                <X size={18} />
+              </button>
+              <p className="eyebrow">Permanent action</p>
+              <h2 id="purge-startup-title">
+                Delete {startupToPurge.name} forever?
+              </h2>
+              <p>
+                This permanently erases the startup together with its
+                memberships, tasks, and assignments. It cannot be undone and
+                platform support will not be able to restore it.
+              </p>
+              <div className="admin-modal-actions">
+                <button
+                  type="button"
+                  className="button button--outline"
+                  onClick={() => setStartupToPurge(null)}
+                  disabled={purgeStartupMutation.isPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="button admin-danger-solid"
+                  onClick={() => purgeStartupMutation.mutate(startupToPurge.realId)}
+                  disabled={purgeStartupMutation.isPending}
+                >
+                  <Trash2 size={14} />
+                  {purgeStartupMutation.isPending
+                    ? "Deleting…"
+                    : "Yes, delete forever"}
+                </button>
+              </div>
+            </section>
           </div>
         )}
         {composeOpen && (
