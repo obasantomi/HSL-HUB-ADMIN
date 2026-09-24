@@ -934,8 +934,7 @@ export default function AdminDashboard() {
                     <p>
                       <strong>Removed by their founders.</strong> These startups
                       are no longer visible on the platform but remain on
-                      record. They can be restored only through platform support,
-                      who will revert the startup's status in the database.
+                      record. They can be restored only through platform support.
                     </p>
                   </div>
                 )}
