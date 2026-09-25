@@ -32,7 +32,12 @@ import {
 import { gsap } from "gsap";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useMutationState,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useAuth } from "./contexts/AuthContext";
 import {
   fetchAdminUsers,
@@ -49,10 +54,11 @@ import {
   type AdminUser,
   type Announcement as ApiAnnouncement,
 } from "./lib/adminApi";
-import { describeError, getErrorMessage } from "./lib/errors";
+import { describeError } from "./lib/errors";
+import ErrorState from "./components/ErrorState";
+import LoadingButton from "./components/LoadingButton";
 
 const describeErrorKind = (error: unknown) => describeError(error).kind;
-import ErrorState from "./components/ErrorState";
 
 type ReviewStatus = "Pending" | "Approved" | "Rejected" | "Deleted";
 type Application = {
@@ -440,6 +446,36 @@ export default function AdminDashboard() {
       ? item.status !== "Deleted"
       : item.status === startupStatus,
   );
+  // Refs flip synchronously, so a fast double-click can't slip a second request
+  // in before React re-renders the disabled button.
+  const inFlight = useRef(new Set<string>());
+  const runOnce = (key: string, request: () => Promise<unknown>) => {
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    // Failures are reported by each mutation's onError.
+    request()
+      .catch(() => undefined)
+      .finally(() => inFlight.current.delete(key));
+  };
+  const showMutationError = (error: unknown, action: string) => {
+    const info = describeError(error);
+    toast.error(action, {
+      description: info.message,
+      action:
+        info.kind === "unauthorized"
+          ? { label: "Sign in", onClick: () => void logout() }
+          : undefined,
+    });
+  };
+  const refreshStartupViews = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin", "startups"] });
+    queryClient.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+  };
+  const refreshAnnouncementViews = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] });
+    queryClient.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+  };
   const startupMutation = useMutation({
     mutationFn: ({
       id,
@@ -456,15 +492,16 @@ export default function AdminDashboard() {
       );
       setSelectedStartup(null);
     },
-    onError: (error: Error) => {
-      toast.error(getErrorMessage(error, "Failed to update startup"));
+    onError: (error, { status }) => {
+      showMutationError(
+        error,
+        status === "APPROVED"
+          ? "Couldn't approve startup"
+          : "Couldn't reject startup",
+      );
     },
     // Refresh every view that depends on startup status, whether the change succeeded or was refused as stale.
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin", "startups"] });
-      queryClient.invalidateQueries({ queryKey: ["admin", "dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
-    },
+    onSettled: refreshStartupViews,
   });
   const purgeStartupMutation = useMutation({
     mutationFn: (id: string) => permanentlyDeleteStartup(id),
@@ -473,61 +510,93 @@ export default function AdminDashboard() {
       setStartupToPurge(null);
       setSelectedStartup(null);
     },
-    onError: (error: Error) => {
-      toast.error(getErrorMessage(error, "Failed to delete startup"));
+    onError: (error) => {
+      showMutationError(error, "Couldn't delete startup");
+      // The startup changed or vanished underneath us; drop the stale
+      // confirmation so the review modal can show its current state.
+      const kind = describeErrorKind(error);
+      if (kind === "conflict" || kind === "not-found") setStartupToPurge(null);
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin", "startups"] });
-      queryClient.invalidateQueries({ queryKey: ["admin", "dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
-    },
+    onSettled: refreshStartupViews,
   });
-  const createAnnouncementMutation = useMutation({
-    mutationFn: (data: {
-      title: string;
-      content: string;
-      published: boolean;
-    }) => createAnnouncement(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] });
-      setComposeOpen(false);
-      setEditingAnnouncement(null);
-      toast.success("Announcement created");
-    },
-    onError: (error: Error) => {
-      toast.error(getErrorMessage(error, "Failed to create announcement"));
-    },
-  });
-  const updateAnnouncementMutation = useMutation({
+  const saveAnnouncementMutation = useMutation({
     mutationFn: ({
       id,
       data,
     }: {
-      id: string;
-      data: { title?: string; content?: string; published?: boolean };
-    }) => updateAnnouncement(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] });
+      id?: string;
+      state: "Draft" | "Published";
+      data: { title: string; content: string; published: boolean };
+    }) => (id ? updateAnnouncement(id, data) : createAnnouncement(data)),
+    onSuccess: (_data, { id, state }) => {
       setComposeOpen(false);
       setEditingAnnouncement(null);
-      toast.success("Announcement updated");
+      toast.success(
+        id
+          ? "Announcement updated"
+          : state === "Published"
+            ? "Announcement published to all members"
+            : "Draft saved",
+      );
     },
-    onError: (error: Error) => {
-      toast.error(getErrorMessage(error, "Failed to update announcement"));
+    onError: (error, { id, state }) => {
+      showMutationError(
+        error,
+        id
+          ? "Couldn't save changes"
+          : state === "Published"
+            ? "Couldn't publish announcement"
+            : "Couldn't save draft",
+      );
     },
+    onSettled: refreshAnnouncementViews,
+  });
+  const publishAnnouncementMutation = useMutation({
+    mutationKey: ["admin", "announcement-row", "publish"],
+    mutationFn: (id: string) => updateAnnouncement(id, { published: true }),
+    onSuccess: () => {
+      toast.success("Announcement published");
+    },
+    onError: (error) => {
+      showMutationError(error, "Couldn't publish announcement");
+    },
+    onSettled: refreshAnnouncementViews,
   });
   const deleteAnnouncementMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await deleteAnnouncement(id);
-    },
+    mutationKey: ["admin", "announcement-row", "delete"],
+    mutationFn: (id: string) => deleteAnnouncement(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin", "announcements"] });
       toast.success("Announcement deleted");
     },
-    onError: (error: Error) => {
-      toast.error(getErrorMessage(error, "Failed to delete announcement"));
+    onError: (error) => {
+      showMutationError(error, "Couldn't delete announcement");
     },
+    onSettled: refreshAnnouncementViews,
   });
+  // Several rows can be busy at once, so track each pending row by id.
+  const pendingAnnouncementActions = useMutationState({
+    filters: { mutationKey: ["admin", "announcement-row"], status: "pending" },
+    select: (mutation) => ({
+      action: mutation.options.mutationKey?.[2] as "publish" | "delete",
+      id: mutation.state.variables as string,
+    }),
+  });
+  const announcementRowAction = (id: string) =>
+    pendingAnnouncementActions.find((item) => item.id === id)?.action;
+  const pendingDecision = startupMutation.isPending
+    ? startupMutation.variables?.status
+    : undefined;
+  const isStartupBusy =
+    startupMutation.isPending || purgeStartupMutation.isPending;
+  const isSavingAnnouncement = saveAnnouncementMutation.isPending;
+  const savingState = isSavingAnnouncement
+    ? saveAnnouncementMutation.variables?.state
+    : undefined;
+  const closeCompose = () => {
+    if (isSavingAnnouncement) return;
+    setComposeOpen(false);
+    setEditingAnnouncement(null);
+  };
   const handleStartupSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent)
@@ -538,39 +607,45 @@ export default function AdminDashboard() {
       !STARTUP_ACTIONS[selectedStartup.status].includes(decision)
     )
       return;
-    startupMutation.mutate({
-      id: selectedStartup.realId,
-      status: decision === "Approved" ? "APPROVED" : "REJECTED",
-    });
+    const id = selectedStartup.realId;
+    runOnce(`startup:${id}`, () =>
+      startupMutation.mutateAsync({
+        id,
+        status: decision === "Approved" ? "APPROVED" : "REJECTED",
+      }),
+    );
+  };
+  const purgeStartup = (id: string) => {
+    runOnce(`startup:${id}`, () => purgeStartupMutation.mutateAsync(id));
   };
   const saveAnnouncement = (
-    event: FormEvent<HTMLFormElement>,
+    form: HTMLFormElement,
     state: "Draft" | "Published",
   ) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    if (!form.reportValidity()) return;
+    const data = new FormData(form);
     const title = String(data.get("title") || "").trim();
     const message = String(data.get("message") || "").trim();
     if (!title || !message)
       return toast.error("Title and message are required");
-    if (editingAnnouncement) {
-      updateAnnouncementMutation.mutate({
-        id: editingAnnouncement.id,
+    const id = editingAnnouncement?.id;
+    runOnce("announcement:compose", () =>
+      saveAnnouncementMutation.mutateAsync({
+        id,
+        state,
         data: { title, content: message, published: state === "Published" },
-      });
-    } else {
-      createAnnouncementMutation.mutate({
-        title,
-        content: message,
-        published: state === "Published",
-      });
-    }
+      }),
+    );
   };
-  const deleteAnnouncement = (id: string) => {
-    deleteAnnouncementMutation.mutate(id);
+  const removeAnnouncement = (id: string) => {
+    runOnce(`announcement:${id}`, () =>
+      deleteAnnouncementMutation.mutateAsync(id),
+    );
   };
   const publish = (id: string) => {
-    updateAnnouncementMutation.mutate({ id, data: { published: true } });
+    runOnce(`announcement:${id}`, () =>
+      publishAnnouncementMutation.mutateAsync(id),
+    );
   };
   const logout = async () => {
     await firebaseLogout();
@@ -1016,50 +1091,64 @@ export default function AdminDashboard() {
                   </button>
                 </div>
                 <section className="admin-announcement-list">
-                  {announcements.map((item) => (
-                    <article key={item.id}>
-                      <div className="admin-announcement-icon">
-                        <Megaphone size={17} />
-                      </div>
-                      <div>
-                        <div className="announcement-title-line">
-                          <h3>{item.title}</h3>
-                          <StatusPill status={item.state} />
+                  {announcements.map((item) => {
+                    const rowAction = announcementRowAction(item.id);
+                    return (
+                      <article
+                        key={item.id}
+                        className={rowAction ? "is-busy" : undefined}
+                        aria-busy={Boolean(rowAction)}
+                      >
+                        <div className="admin-announcement-icon">
+                          <Megaphone size={17} />
                         </div>
-                        <p>{item.message}</p>
-                        <small>
-                          {item.date} · {item.author}
-                        </small>
-                      </div>
-                      <div className="admin-announcement-actions">
-                        <button
-                          className="button button--outline admin-small-action"
-                          onClick={() => {
-                            setEditingAnnouncement(item);
-                            setComposeOpen(true);
-                          }}
-                        >
-                          <Pencil size={13} />
-                          Edit
-                        </button>
-                        {item.state === "Draft" && (
+                        <div>
+                          <div className="announcement-title-line">
+                            <h3>{item.title}</h3>
+                            <StatusPill status={item.state} />
+                          </div>
+                          <p>{item.message}</p>
+                          <small>
+                            {item.date} · {item.author}
+                          </small>
+                        </div>
+                        <div className="admin-announcement-actions">
                           <button
                             className="button button--outline admin-small-action"
-                            onClick={() => publish(item.id)}
+                            disabled={Boolean(rowAction)}
+                            onClick={() => {
+                              setEditingAnnouncement(item);
+                              setComposeOpen(true);
+                            }}
                           >
-                            Publish <Send size={13} />
+                            <Pencil size={13} />
+                            Edit
                           </button>
-                        )}
-                        <button
-                          className="button button--outline admin-small-action admin-danger-action"
-                          onClick={() => deleteAnnouncement(item.id)}
-                        >
-                          <Trash2 size={13} />
-                          Delete
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                          {item.state === "Draft" && (
+                            <LoadingButton
+                              className="button button--outline admin-small-action"
+                              loading={rowAction === "publish"}
+                              loadingText="Publishing…"
+                              disabled={Boolean(rowAction)}
+                              onClick={() => publish(item.id)}
+                            >
+                              Publish <Send size={13} />
+                            </LoadingButton>
+                          )}
+                          <LoadingButton
+                            className="button button--outline admin-small-action admin-danger-action"
+                            loading={rowAction === "delete"}
+                            loadingText="Deleting…"
+                            disabled={Boolean(rowAction)}
+                            onClick={() => removeAnnouncement(item.id)}
+                          >
+                            <Trash2 size={13} />
+                            Delete
+                          </LoadingButton>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </section>
               </section>
             )}
@@ -1134,6 +1223,7 @@ export default function AdminDashboard() {
                 type="button"
                 className="modal-close"
                 onClick={() => setSelectedStartup(null)}
+                disabled={isStartupBusy}
               >
                 <X size={18} />
               </button>
@@ -1211,7 +1301,7 @@ export default function AdminDashboard() {
                     type="button"
                     className="button button--outline admin-danger-action admin-modal-actions-start"
                     onClick={() => setStartupToPurge(selectedStartup)}
-                    disabled={startupMutation.isPending}
+                    disabled={isStartupBusy}
                   >
                     <Trash2 size={14} />
                     Delete forever
@@ -1220,33 +1310,41 @@ export default function AdminDashboard() {
                 {STARTUP_ACTIONS[selectedStartup.status].includes(
                   "Rejected",
                 ) && (
-                  <button
+                  <LoadingButton
                     name="decision"
                     value="Rejected"
                     className="button button--outline"
                     type="submit"
-                    disabled={startupMutation.isPending}
+                    loading={pendingDecision === "REJECTED"}
+                    loadingText={
+                      selectedStartup.status === "Approved"
+                        ? "Taking offline…"
+                        : "Rejecting…"
+                    }
+                    disabled={isStartupBusy}
                   >
                     {selectedStartup.status === "Approved"
                       ? "Reject & take offline"
                       : "Reject"}
-                  </button>
+                  </LoadingButton>
                 )}
                 {STARTUP_ACTIONS[selectedStartup.status].includes(
                   "Approved",
                 ) && (
-                  <button
+                  <LoadingButton
                     name="decision"
                     value="Approved"
                     className="button button--black"
                     type="submit"
-                    disabled={startupMutation.isPending}
+                    loading={pendingDecision === "APPROVED"}
+                    loadingText="Approving…"
+                    disabled={isStartupBusy}
                   >
                     {selectedStartup.status === "Rejected"
                       ? "Approve instead"
                       : "Approve startup"}{" "}
                     <Check size={14} />
-                  </button>
+                  </LoadingButton>
                 )}
               </div>
             </form>
@@ -1286,19 +1384,16 @@ export default function AdminDashboard() {
                 >
                   Cancel
                 </button>
-                <button
+                <LoadingButton
                   type="button"
                   className="button admin-danger-solid"
-                  onClick={() =>
-                    purgeStartupMutation.mutate(startupToPurge.realId)
-                  }
-                  disabled={purgeStartupMutation.isPending}
+                  onClick={() => purgeStartup(startupToPurge.realId)}
+                  loading={purgeStartupMutation.isPending}
+                  loadingText="Deleting forever…"
                 >
                   <Trash2 size={14} />
-                  {purgeStartupMutation.isPending
-                    ? "Deleting…"
-                    : "Yes, delete forever"}
-                </button>
+                  Yes, delete forever
+                </LoadingButton>
               </div>
             </section>
           </div>
@@ -1307,15 +1402,17 @@ export default function AdminDashboard() {
           <div className="app-modal-backdrop">
             <form
               className="admin-compose app-modal"
-              onSubmit={(event) => saveAnnouncement(event, "Published")}
+              aria-busy={isSavingAnnouncement}
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveAnnouncement(event.currentTarget, "Published");
+              }}
             >
               <button
                 className="modal-close"
                 type="button"
-                onClick={() => {
-                  setComposeOpen(false);
-                  setEditingAnnouncement(null);
-                }}
+                onClick={closeCompose}
+                disabled={isSavingAnnouncement}
               >
                 <X size={18} />
               </button>
@@ -1324,47 +1421,57 @@ export default function AdminDashboard() {
                 {editingAnnouncement ? "Edit announcement" : "New announcement"}
               </h2>
               <p>Compose a clear update for every approved HSL member.</p>
-              <label>
-                Title
-                <input
-                  name="title"
-                  required
-                  defaultValue={editingAnnouncement?.title || ""}
-                  placeholder="What should members know?"
-                />
-              </label>
-              <label>
-                Message
-                <textarea
-                  name="message"
-                  required
-                  rows={5}
-                  defaultValue={editingAnnouncement?.message || ""}
-                  placeholder="Write the essential details, next steps, and timing."
-                />
-              </label>
+              {/* Inputs lock while saving; values survive a failed request. */}
+              <fieldset
+                className="admin-compose-fields"
+                disabled={isSavingAnnouncement}
+              >
+                <label>
+                  Title
+                  <input
+                    name="title"
+                    required
+                    defaultValue={editingAnnouncement?.title || ""}
+                    placeholder="What should members know?"
+                  />
+                </label>
+                <label>
+                  Message
+                  <textarea
+                    name="message"
+                    required
+                    rows={5}
+                    defaultValue={editingAnnouncement?.message || ""}
+                    placeholder="Write the essential details, next steps, and timing."
+                  />
+                </label>
+              </fieldset>
               <div className="admin-modal-actions">
-                <button
+                <LoadingButton
                   type="button"
                   className="button button--outline"
+                  loading={savingState === "Draft"}
+                  loadingText="Saving draft…"
+                  disabled={isSavingAnnouncement}
                   onClick={(event) => {
                     const form = event.currentTarget.form;
-                    if (form)
-                      saveAnnouncement(
-                        {
-                          preventDefault: () => undefined,
-                          currentTarget: form,
-                        } as unknown as FormEvent<HTMLFormElement>,
-                        "Draft",
-                      );
+                    if (form) saveAnnouncement(form, "Draft");
                   }}
                 >
                   Save draft
-                </button>
-                <button type="submit" className="button button--black">
+                </LoadingButton>
+                <LoadingButton
+                  type="submit"
+                  className="button button--black"
+                  loading={savingState === "Published"}
+                  loadingText={
+                    editingAnnouncement ? "Saving changes…" : "Publishing…"
+                  }
+                  disabled={isSavingAnnouncement}
+                >
                   {editingAnnouncement ? "Save changes" : "Publish to all"}{" "}
                   <Send size={14} />
-                </button>
+                </LoadingButton>
               </div>
             </form>
           </div>

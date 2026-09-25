@@ -37,6 +37,19 @@ function serverMessage(data: unknown): string | undefined {
   return undefined;
 }
 
+/** First field message from a Zod `format()` payload, e.g. "Title is required". */
+function firstValidationIssue(errors: unknown): string | undefined {
+  if (!errors || typeof errors !== "object") return undefined;
+  const own = (errors as { _errors?: unknown })._errors;
+  if (Array.isArray(own) && typeof own[0] === "string") return own[0];
+  for (const [key, value] of Object.entries(errors)) {
+    if (key === "_errors") continue;
+    const nested = firstValidationIssue(value);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
 /** Classifies any thrown value into a clear, admin-facing error. */
 export function describeError(error: unknown): AdminErrorInfo {
   if (axios.isAxiosError(error)) {
@@ -90,7 +103,20 @@ export function describeError(error: unknown): AdminErrorInfo {
         kind: "invalid",
         status,
         title: "The request was rejected",
-        message: fromServer ?? "Some of the submitted details are invalid.",
+        message:
+          firstValidationIssue(
+            (error.response.data as { errors?: unknown } | undefined)?.errors,
+          ) ??
+          fromServer ??
+          "Some of the submitted details are invalid.",
+      };
+    }
+    if (status === 429) {
+      return {
+        kind: "invalid",
+        status,
+        title: "Too many requests",
+        message: "You're doing that too quickly. Wait a moment and try again.",
       };
     }
     if (status >= 500) {

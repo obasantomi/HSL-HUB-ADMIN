@@ -185,3 +185,18 @@ html.dark .admin-error > p:not(.eyebrow) { color: #aaa; }
 html.dark .admin-error-icon { background: #2a1519; color: #f08a9c; }
 html.dark .admin-error-page { background: #101010; }
 @media (max-width:600px) { .admin-error { margin: 20px auto; padding: 28px 18px; } .admin-error-actions { flex-direction: column; width: 100%; } .admin-error-actions .button { width: 100%; } }
+
+/* Mutation loading states: the active button keeps full contrast and shows progress; the rest dim and lock. */
+.admin-shell .button:disabled { cursor: not-allowed; transform: none; opacity: .5; }
+.admin-shell .button.is-loading { position: relative; overflow: hidden; cursor: progress; opacity: 1; }
+.admin-shell .button.is-loading::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.28) 50%, transparent 80%); transform: translateX(-100%); animation: admin-button-sheen 1.1s ease-in-out infinite; pointer-events: none; }
+.admin-shell .button--outline.is-loading::after { background: linear-gradient(100deg, transparent 20%, rgba(17,17,17,.08) 50%, transparent 80%); }
+html.dark .admin-shell .button--outline.is-loading::after { background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.12) 50%, transparent 80%); }
+.admin-shell .admin-danger-action.is-loading { color: #fff !important; border-color: #b42d45 !important; background: #b42d45 !important; }
+@keyframes admin-button-sheen { to { transform: translateX(100%); } }
+.modal-close:disabled { opacity: .35; cursor: not-allowed; }
+.admin-compose-fields { display: grid; gap: 13px; min-width: 0; margin: 0; padding: 0; border: 0; transition: opacity .2s var(--ease); }
+.admin-compose-fields:disabled { opacity: .6; }
+.admin-announcement-list article { transition: opacity .2s var(--ease); }
+.admin-announcement-list article.is-busy > div:not(.admin-announcement-actions) { opacity: .55; }
+@media (prefers-reduced-motion: reduce) { .admin-shell .button.is-loading::after { animation: none; } .admin-spin { animation-duration: 2s; } }
