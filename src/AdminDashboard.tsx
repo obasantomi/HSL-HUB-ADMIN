@@ -191,7 +191,10 @@ function useBodyScrollLock(locked: boolean) {
   useEffect(() => {
     if (!locked) return;
     const { body, documentElement } = document;
-    const previous = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
+    const previous = {
+      overflow: body.style.overflow,
+      paddingRight: body.style.paddingRight,
+    };
     if (scrollLockCount === 0) {
       const scrollbarWidth = window.innerWidth - documentElement.clientWidth;
       body.style.overflow = "hidden";
@@ -343,7 +346,9 @@ export default function AdminDashboard() {
     useState<Announcement | null>(null);
   const overviewScope = useRef<HTMLElement>(null);
   useBodyScrollLock(
-    Boolean(selectedApplication || selectedStartup || composeOpen || startupToPurge),
+    Boolean(
+      selectedApplication || selectedStartup || composeOpen || startupToPurge,
+    ),
   );
   const dashboardStatsQuery = useQuery({
     queryKey: ["admin", "dashboard"],
@@ -376,7 +381,12 @@ export default function AdminDashboard() {
   // Each section only depends on the data it shows, so one failing endpoint
   // doesn't take down the whole dashboard.
   const sectionQueries = {
-    overview: [dashboardStatsQuery, usersQuery, startupsQuery, announcementsQuery],
+    overview: [
+      dashboardStatsQuery,
+      usersQuery,
+      startupsQuery,
+      announcementsQuery,
+    ],
     members: [usersQuery],
     startups: [startupsQuery],
     announcements: [announcementsQuery],
@@ -892,49 +902,59 @@ export default function AdminDashboard() {
                     and category before granting it a place on the platform.
                   </p>
                   <div className="admin-tabs">
-                    {(["All", "Pending", "Approved", "Rejected", "Deleted"] as const).map(
-                      (status) => (
-                        <button
-                          key={status}
-                          className={
-                            startupStatus === status ? "is-active" : ""
-                          }
-                          onClick={() => setStartupStatus(status)}
-                        >
-                          {status}
-                          {status === "Pending" && (
-                            <em>{metrics.pendingStartups}</em>
+                    {(
+                      [
+                        "All",
+                        "Pending",
+                        "Approved",
+                        "Rejected",
+                        "Deleted",
+                      ] as const
+                    ).map((status) => (
+                      <button
+                        key={status}
+                        className={startupStatus === status ? "is-active" : ""}
+                        onClick={() => setStartupStatus(status)}
+                      >
+                        {status}
+                        {status === "Pending" && (
+                          <em>{metrics.pendingStartups}</em>
+                        )}
+                        {status === "Rejected" &&
+                          metrics.rejectedStartups > 0 && (
+                            <em>{metrics.rejectedStartups}</em>
                           )}
-                          {status === "Rejected" &&
-                            metrics.rejectedStartups > 0 && (
-                              <em>{metrics.rejectedStartups}</em>
-                            )}
-                          {status === "Deleted" &&
-                            metrics.deletedStartups > 0 && (
-                              <em>{metrics.deletedStartups}</em>
-                            )}
-                        </button>
-                      ),
-                    )}
+                        {status === "Deleted" &&
+                          metrics.deletedStartups > 0 && (
+                            <em>{metrics.deletedStartups}</em>
+                          )}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <div className="admin-governance-note" role="note">
                   <Info size={15} />
                   <p>
-                    <strong>Startups are governed by HSL administrators.</strong>{" "}
+                    <strong>
+                      Startups are governed by HSL administrators.
+                    </strong>{" "}
                     Every submission is reviewed before it goes live.
-                    Administrators may approve, reject, or permanently delete
-                    a startup; permanent deletion is available only after a
+                    Administrators may approve, reject, or permanently delete a
+                    startup; permanent deletion is available only after a
                     startup has been rejected or removed by its founder.
                   </p>
                 </div>
                 {startupStatus === "Deleted" && (
-                  <div className="admin-governance-note admin-governance-note--warn" role="note">
+                  <div
+                    className="admin-governance-note admin-governance-note--warn"
+                    role="note"
+                  >
                     <TriangleAlert size={15} />
                     <p>
                       <strong>Removed by their founders.</strong> These startups
                       are no longer visible on the platform but remain on
-                      record. They can be restored only through platform support.
+                      record. They can be restored only through platform
+                      support.
                     </p>
                   </div>
                 )}
@@ -1175,9 +1195,7 @@ export default function AdminDashboard() {
                   </p>
                   <p>
                     <strong>Restoration.</strong> A deleted startup can be
-                    restored only after the founder contacts platform support.
-                    Platform support will then restore it by manually reverting the startup's
-                    status in the database.
+                    restored only after contacting platform support.
                   </p>
                 </div>
               )}
@@ -1271,7 +1289,9 @@ export default function AdminDashboard() {
                 <button
                   type="button"
                   className="button admin-danger-solid"
-                  onClick={() => purgeStartupMutation.mutate(startupToPurge.realId)}
+                  onClick={() =>
+                    purgeStartupMutation.mutate(startupToPurge.realId)
+                  }
                   disabled={purgeStartupMutation.isPending}
                 >
                   <Trash2 size={14} />
