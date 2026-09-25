@@ -200,3 +200,5 @@ html.dark .admin-shell .button--outline.is-loading::after { background: linear-g
 .admin-announcement-list article { transition: opacity .2s var(--ease); }
 .admin-announcement-list article.is-busy > div:not(.admin-announcement-actions) { opacity: .55; }
 @media (prefers-reduced-motion: reduce) { .admin-shell .button.is-loading::after { animation: none; } .admin-spin { animation-duration: 2s; } }
+
+.admin-copy-field { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }.admin-copy-button { display: inline-flex; gap: 5px; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid #bdbdb9; color: inherit; background: transparent; font-size: 9px; font-weight: 800; cursor: pointer; }.admin-copy-button:hover { border-color: currentColor; }html.dark .admin-copy-button { border-color: #666; }

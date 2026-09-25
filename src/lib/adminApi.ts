@@ -91,7 +91,13 @@ export interface AdminStartup {
   status: string;
   createdAt: string;
   deletedAt: string | null;
-  owner: { id: string; name: string; email: string; profileUrl: string | null };
+  owner: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string | null;
+    profileUrl: string | null;
+  };
   memberCount: number;
 }
 

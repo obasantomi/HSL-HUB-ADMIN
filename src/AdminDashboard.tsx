@@ -4,6 +4,8 @@ import {
   Check,
   ChevronRight,
   ClipboardCheck,
+  Copy,
+  ExternalLink,
   Home,
   Info,
   LayoutDashboard,
@@ -58,6 +60,8 @@ import { describeError } from "./lib/errors";
 import ErrorState from "./components/ErrorState";
 import LoadingButton from "./components/LoadingButton";
 
+const PUBLIC_SITE_URL = "https://hsl-hub-lime.vercel.app";
+
 const describeErrorKind = (error: unknown) => describeError(error).kind;
 
 type ReviewStatus = "Pending" | "Approved" | "Rejected" | "Deleted";
@@ -80,6 +84,7 @@ type StartupSubmission = {
   name: string;
   founder: string;
   founderEmail: string;
+  founderPhone: string;
   stage: string;
   category: string;
   description: string;
@@ -157,6 +162,7 @@ function mapStartupToSubmission(startup: AdminStartup): StartupSubmission {
     name: startup.name,
     founder: startup.owner?.name ?? "Unknown",
     founderEmail: startup.owner?.email ?? "",
+    founderPhone: startup.owner?.phone ?? "",
     stage: startup.stage?.replace(/_/g, " ") ?? "Not set",
     category: startup.industry?.replace(/_/g, " ") ?? "Not set",
     description: startup.description,
@@ -618,6 +624,14 @@ export default function AdminDashboard() {
   const purgeStartup = (id: string) => {
     runOnce(`startup:${id}`, () => purgeStartupMutation.mutateAsync(id));
   };
+  const copyFounderPhone = async (phone: string) => {
+    try {
+      await navigator.clipboard.writeText(phone);
+      toast.success("Phone number copied");
+    } catch {
+      toast.error("Could not copy the phone number");
+    }
+  };
   const saveAnnouncement = (
     form: HTMLFormElement,
     state: "Draft" | "Published",
@@ -693,7 +707,7 @@ export default function AdminDashboard() {
       <aside className="admin-sidebar">
         <a
           className="admin-mark"
-          href="https://hsl-hub-lime.vercel.app/login"
+          href={`${PUBLIC_SITE_URL}/login`}
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -719,7 +733,7 @@ export default function AdminDashboard() {
         <div className="admin-sidebar-bottom">
           <a
             className="admin-sidebar-action"
-            href="https://hsl-hub-lime.vercel.app/login"
+            href={`${PUBLIC_SITE_URL}/login`}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -1238,6 +1252,30 @@ export default function AdminDashboard() {
                   <dd>{selectedStartup.founder}</dd>
                 </div>
                 <div>
+                  <dt>Founder phone</dt>
+                  <dd className="admin-copy-field">
+                    {selectedStartup.founderPhone ? (
+                      <>
+                        <span>{selectedStartup.founderPhone}</span>
+                        <button
+                          type="button"
+                          className="admin-copy-button"
+                          onClick={() =>
+                            copyFounderPhone(selectedStartup.founderPhone)
+                          }
+                          aria-label="Copy founder phone number"
+                          title="Copy phone number"
+                        >
+                          <Copy size={13} />
+                          Copy
+                        </button>
+                      </>
+                    ) : (
+                      "Not provided"
+                    )}
+                  </dd>
+                </div>
+                <div>
                   <dt>Category</dt>
                   <dd>{selectedStartup.category}</dd>
                 </div>
@@ -1296,6 +1334,17 @@ export default function AdminDashboard() {
                 </p>
               )}
               <div className="admin-modal-actions">
+                {selectedStartup.status === "Approved" && (
+                  <a
+                    className="button button--outline admin-modal-actions-start"
+                    href={`${PUBLIC_SITE_URL}/startups/${encodeURIComponent(selectedStartup.realId)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ExternalLink size={14} />
+                    View on public site
+                  </a>
+                )}
                 {PERMANENTLY_DELETABLE.includes(selectedStartup.status) && (
                   <button
                     type="button"
